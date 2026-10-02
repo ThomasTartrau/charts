@@ -1,0 +1,12 @@
+{
+  "name": "tartrau-mods",
+  "owner": { "name": "Thomas Tartrau" },
+  "description": "Mods Claude Code de Thomas Tartrau.",
+  "plugins": [
+    {
+      "name": "charts",
+      "source": "./",
+      "description": "Dessine les blocs vega-lite, mermaid et dot des réponses et des aperçus AskUserQuestion en vraies images (PNG dans Ghostty, SVG sur le desktop)."
+    }
+  ]
+}
