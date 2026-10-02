@@ -1,0 +1,4 @@
+{
+  "description": "charts : blocs vega-lite dessinés en images dans le transcript et sous AskUserQuestion.",
+  "modules": ["./register.tsx"]
+}

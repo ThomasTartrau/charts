@@ -1,0 +1,8 @@
+{
+  "name": "charts",
+  "version": "0.1.0",
+  "description": "Dessine les blocs vega-lite des réponses et des aperçus AskUserQuestion en vraies images (PNG dans Ghostty, SVG sur le desktop).",
+  "author": { "name": "Thomas Tartrau" },
+  "license": "MIT",
+  "keywords": ["charts", "vega-lite", "askuserquestion", "mod"]
+}
