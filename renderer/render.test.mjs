@@ -71,6 +71,24 @@ test('the theme colors the single series with the first palette slot', () => {
   assert.match(dark.svg, /fill="#3987e5"/)
 })
 
+test('bars on a log axis are drawn, inside a layer too, not stacked from log(0)', () => {
+  const spec = {
+    data: { values: [{ m: `petit-${process.pid}-${Date.now()}`, go: 17 }, { m: 'moyen', go: 90 }, { m: 'grand', go: 1550 }] },
+    layer: [
+      { mark: 'bar', encoding: { y: { field: 'm', type: 'nominal', sort: 'x' }, x: { field: 'go', type: 'quantitative', scale: { type: 'log' } } } },
+      { mark: { type: 'rule', strokeDash: [4, 4] }, encoding: { x: { datum: 128 } } },
+    ],
+  }
+  const out = render({ spec, width: 600, theme: 'dark', format: 'svg' })
+  assert.equal(out.ok, true)
+  // une barre empilée depuis 0 sur un axe log sort en « M0,0h0v... » : largeur nulle ;
+  // dessinée, son coin arrondi en fait un « M0,y L<largeur>,y ... »
+  const widths = [...out.svg.matchAll(/aria-roledescription="bar" d="M0,[\d.]+[hL]([\d.]+)/g)].map(m => Number(m[1]))
+  assert.equal(widths.length, 3)
+  assert.ok(widths.every(w => w > 0), `largeurs ${widths}`)
+  assert.ok(widths[0] < widths[1] && widths[1] < widths[2], `largeurs ${widths}`)
+})
+
 test('a spec vega-lite cannot compile is an error with the reason, not a crash', () => {
   const out = render({ spec: { mark: 'nope' }, width: 400, theme: 'dark', format: 'png' })
   assert.equal(out.ok, false)

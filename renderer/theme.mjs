@@ -3,8 +3,8 @@
 // en encre neutre et jamais dans la couleur d'une série. Même palette pour les
 // schémas Graphviz.
 
-// À incrémenter à chaque changement du thème : invalide le cache disque.
-export const THEME_VERSION = 7
+// À incrémenter à chaque changement du thème ou du rendu : invalide le cache disque.
+export const THEME_VERSION = 8
 
 export const FONT = 'JetBrainsMono Nerd Font, JetBrains Mono, Menlo, monospace'
 // Graphviz en wasm ne connaît que les métriques de Times, Helvetica et Courier :

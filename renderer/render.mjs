@@ -50,13 +50,35 @@ function svgSize(svg, unit) {
   return { width: Number(match[1]) * unit, height: Number(match[3]) * unit }
 }
 
+/**
+ * vega-lite empile les barres même sur un axe log : chaque barre part de 0, log(0)
+ * vaut -inf, le domaine devient [0, ...] et plus aucune marque n'est dessinée. Un
+ * canal log sans `stack` explicite est désempilé, dans toutes les sous-vues.
+ */
+function unstackedLog(spec) {
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return spec
+  const out = { ...spec }
+  if (spec.encoding && typeof spec.encoding === 'object') {
+    out.encoding = { ...spec.encoding }
+    for (const channel of ['x', 'y']) {
+      const def = spec.encoding[channel]
+      if (def?.scale?.type === 'log' && !('stack' in def)) out.encoding[channel] = { ...def, stack: null }
+    }
+  }
+  for (const key of ['layer', 'concat', 'hconcat', 'vconcat']) {
+    if (Array.isArray(spec[key])) out[key] = spec[key].map(unstackedLog)
+  }
+  if (spec.spec) out.spec = unstackedLog(spec.spec)
+  return out
+}
+
 /** vega-lite : la taille est imposée à la compilation, l'échelle de sortie vaut 1. */
 async function vegaLiteSvg(spec, width, maxHeight, theme) {
   if (!spec || typeof spec !== 'object') throw new Error('spec manquante ou invalide')
   const [vega, vegaLite] = await Promise.all([import('vega'), import('vega-lite')])
   let compiled
   try {
-    compiled = vegaLite.compile(sized(spec, width, maxHeight), { config: themeConfig(theme) }).spec
+    compiled = vegaLite.compile(sized(unstackedLog(spec), width, maxHeight), { config: themeConfig(theme) }).spec
   } catch (error) {
     // vega-lite donne parfois une erreur interne (mark inconnue) : on dit d'où elle vient
     throw new Error(`spec vega-lite invalide : ${messageOf(error)}`)
