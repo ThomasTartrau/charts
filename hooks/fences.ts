@@ -31,6 +31,19 @@ const LANGS = new Map<string, BlockKind>([
 // doit utiliser le même caractère, au moins aussi long, seule sur sa ligne.
 const OPEN = /^([ \t]*)(`{3,}|~{3,})[ \t]*([^\s`]*)[^\n]*$/
 
+/** La ligne ouvre un bloc de code : sa fence, et son type quand c'est un graphique ou un schéma. */
+export function fenceOpening(line: string): { fence: string; kind: BlockKind | undefined } | null {
+  const match = OPEN.exec(line)
+  if (!match) return null
+  return { fence: match[2] ?? '```', kind: LANGS.get((match[3] ?? '').toLowerCase()) }
+}
+
+/** La ligne ferme le bloc ouvert par `fence`. */
+export function closesFence(line: string, fence: string): boolean {
+  const trimmed = line.trim()
+  return trimmed.length >= fence.length && trimmed[0] === fence[0] && [...trimmed].every(c => c === fence[0])
+}
+
 export function chartBlocksOf(text: string): ChartBlock[] {
   const blocks: ChartBlock[] = []
   const lines = text.split('\n')
@@ -40,19 +53,10 @@ export function chartBlocksOf(text: string): ChartBlock[] {
   for (const line of lines) {
     const lineEnd = offset + line.length
     if (open === null) {
-      const match = OPEN.exec(line)
-      if (match) {
-        const fence = match[2] ?? '```'
-        const lang = (match[3] ?? '').toLowerCase()
-        open = { start: offset, fence, kind: LANGS.get(lang), bodyStart: lineEnd + 1 }
-      }
+      const opening = fenceOpening(line)
+      if (opening) open = { start: offset, ...opening, bodyStart: lineEnd + 1 }
     } else {
-      const trimmed = line.trim()
-      const isClose =
-        trimmed.length >= open.fence.length &&
-        trimmed[0] === open.fence[0] &&
-        [...trimmed].every(c => c === open!.fence[0])
-      if (isClose) {
+      if (closesFence(line, open.fence)) {
         if (open.kind) {
           const source = text.slice(open.bodyStart, Math.max(open.bodyStart, offset - 1)).trim()
           if (source.length > 0) blocks.push({ kind: open.kind, start: open.start, end: lineEnd, source })

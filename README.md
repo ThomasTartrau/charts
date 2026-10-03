@@ -151,6 +151,9 @@ flowchart LR
   [resvg](https://github.com/yisibl/resvg-js). The mod starts it once per image.
 - Rendered images are cached in `~/.cache/claude-charts`, keyed by a hash of the spec. Scrolling back
   over an old chart doesn't start Node again.
+- Claude Code draws a block of text only once the block is finished, so a chart shows up when the
+  reply ends. While the reply streams, the chart's source doesn't scroll by: one italic line holds its
+  place, with the chart's title, until the image replaces it.
 
 When a block can't be drawn, usually an invalid spec, you get the source back with the error under it.
 

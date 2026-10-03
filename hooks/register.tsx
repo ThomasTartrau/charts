@@ -41,6 +41,7 @@ import {
   type Drawing,
   type Run,
 } from './render'
+import { displayOf, hasPlaceholder, restoredFrom, START, type StreamState } from './streaming'
 
 const COMMAND = 'charts'
 /** retrait du texte d'une réponse sous la puce, en colonnes */
@@ -73,6 +74,10 @@ let activeAsk: { file: string; state: AskState; isDone: boolean } | null = null
 let bandId: string | null = null
 /** la bande a le clavier : les flèches marchent, inutile d'indiquer ctrl+x tab */
 let bandHasKeys = false
+/** Le message qui s'écrit : son id, et le bloc de code ouvert dans ce qui en est déjà affiché. */
+let streaming: { messageId: string; state: StreamState } | null = null
+/** Le texte d'origine des blocs affichés avec une ligne de remplacement, par message : un redessin ne relit pas la session. */
+const restored = new Map<string, string>()
 
 /** Rend l'image en grand, fond plein, et l'ouvre dans la visionneuse du système. */
 function openLarge($: EngineInterface, drawing: Drawing) {
@@ -80,6 +85,27 @@ function openLarge($: EngineInterface, drawing: Drawing) {
   openInViewer(run, $.plugin.root, drawing, prefs.theme)
     .then(error => error && $.ui.toast(`charts : ouverture impossible : ${error}`))
     .catch(err => $.ui.log(`charts : ouverture impossible : ${err}`))
+}
+
+/**
+ * Le texte d'un bloc fini avec ses sources : le moteur le dessine avec le texte affiché
+ * au streaming, où une ligne tient la place de chaque graphique ; la source est relue
+ * dans le message enregistré. Introuvable, le texte reste tel quel.
+ */
+async function sourceOf($: EngineInterface, requestId: string, text: string): Promise<string> {
+  if (!hasPlaceholder(text)) return text
+  const known = restored.get(requestId)
+  if (known !== undefined) return known
+  const messages = await $.session.messages().catch(err => {
+    $.ui.log(`charts : messages de la session illisibles : ${err}`)
+    return []
+  })
+  // sans agentId, toujours la liste (jamais de deny pour la conversation principale)
+  const replies = Array.isArray(messages) ? messages.filter(m => m.role === 'assistant').map(m => m.text) : []
+  const found = restoredFrom(text, replies)
+  if (found === null) return text
+  restored.set(requestId, found)
+  return found
 }
 
 /** Un graphique ou un schéma prêt à dessiner, ou l'erreur à montrer sous sa source. */
@@ -262,9 +288,22 @@ export const register: Register = on => {
     return { sections: [...composed.sections, { id: 'charts:guide', text: GUIDE, scope: 'session' as const }] }
   })
 
+  // Phase 1, au streaming : la source d'un graphique ne défile pas, une ligne tient sa
+  // place jusqu'à l'image (le bloc fini, plus bas).
+  on('classic.MessageDisplay', async ($, e, next) => {
+    const shown = await next(e)
+    if (!prefs.enabled) return shown
+    const state = streaming?.messageId === e.message_id ? streaming.state : START
+    const display = displayOf(state, shown.displayContent ?? e.delta)
+    streaming = e.final ? null : { messageId: e.message_id, state: display.state }
+    return { ...shown, displayContent: display.text }
+  })
+
   // Phase 1 : graphiques et schémas dans les réponses, à la place de leur bloc.
   on('ui.render', { component: 'AssistantMessage' }, async ($, e, next) => {
     if (!prefs.enabled) return next(e)
+    const text = await sourceOf($, e.requestId, e.props.text)
+    if (text !== e.props.text) e = { ...e, props: { ...e.props, text } }
     const blocks = chartBlocksOf(e.props.text)
     if (blocks.length === 0) return next(e)
 
