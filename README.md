@@ -46,6 +46,9 @@ You need:
 - For images in the terminal, a terminal with the kitty graphics protocol, such as
   [Ghostty](https://ghostty.org) or [kitty](https://sw.kovidgoyal.net/kitty/). Other terminals show
   the chart's text description instead.
+  Under a multiplexer that hides `TERM_PROGRAM` (herdr, for instance), Claude Code doesn't detect the
+  graphics protocol: set `CLAUDE_CODE_FORCE_TERMINAL_IMAGES=1`, as long as the multiplexer passes
+  kitty graphics through to the terminal.
 
 ### 1. Turn on function hooks
 
@@ -99,9 +102,16 @@ Mermaid `pie` and `gantt` blocks are turned into Vega-Lite charts so they share 
 
 ### Options you can compare
 
-When Claude asks you to pick between options (AskUserQuestion) and each one comes with a chart,
-charts merges them into one image with a shared scale. Three bars of different heights mean something
-again. The question moves to the band above the prompt, with the image next to the options.
+When Claude asks you to pick between options (AskUserQuestion) and each one comes with a chart, the
+question moves to the band above the prompt, with the chart of the option you look at next to the
+options. Each chart is drawn alone, on the axes of all the options: three bars of different heights
+mean something again. Without the band (engine dialog), the charts are merged into one image above it.
+If the band renders badly in your terminal, `/charts band off` keeps the engine dialog for every
+question, with the charts above it.
+
+When a long description would leave the image only a few rows, it is set beside the image instead of
+above it. On the "Autre" field, the field takes most of the band and the text you type is shown whole
+next to it.
 
 <div align="center">
   <img alt="AskUserQuestion with one chart per option, on a shared scale" src="assets/screens/05-ask-chart.png" width="900">
@@ -130,6 +140,7 @@ The `/charts` command shows and changes the settings. They are kept across sessi
 | `/charts width <20-255>` | Maximum chart width, in terminal columns (default 100) |
 | `/charts rows <3-80>` | Maximum chart height, in terminal rows (default 22) |
 | `/charts cell <0.3-0.8>` | Width/height ratio of a terminal cell (default 0.5) |
+| `/charts band on` / `off` | Ask questions in the band above the prompt, or in the engine dialog with the charts above it (default on) |
 | `/charts reset` | Back to the defaults |
 
 ## How it works

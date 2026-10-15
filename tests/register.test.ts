@@ -27,6 +27,8 @@ function textOf(tree: unknown): string {
 /** Le monde sous le mod : store, commandes, renderer et rendu du moteur. */
 function world(on: On, rendered: object = PNG, opener = { exitCode: 0, stderr: '' }) {
   const runs: string[] = []
+  /** le programme de chaque process lancé, hors visionneuse */
+  const programs: string[] = []
   const opened: string[][] = []
   const toasts: string[] = []
   const leads: string[] = []
@@ -45,6 +47,7 @@ function world(on: On, rendered: object = PNG, opener = { exitCode: 0, stderr: '
       opened.push([...e.argv])
       return { value: { ...result, ...opener } }
     }
+    programs.push(e.argv[0] ?? '')
     runs.push(e.init?.stdin ?? '')
     return { value: { ...result, stdout: JSON.stringify(rendered) } }
   })
@@ -56,7 +59,7 @@ function world(on: On, rendered: object = PNG, opener = { exitCode: 0, stderr: '
     asked.push(e.props.questions)
     return { type: 'engine' as const, ref: 0 }
   })
-  return { runs, opened, toasts, leads, asked }
+  return { runs, programs, opened, toasts, leads, asked }
 }
 
 function message(text: string, surface: 'terminal' | 'desktop' = 'terminal'): RenderInput<'AssistantMessage'> {
@@ -449,6 +452,42 @@ describe('register', () => {
     expect(nodesOf(drawn, 'Image')).toHaveLength(1)
     const sent = JSON.parse(w.runs[0]!)
     expect(sent.spec.hconcat.map((s: { title: string }) => s.title)).toEqual(['1. Offset', '2. Cursor'])
+  })
+
+  test('/charts band off on a terminal with the band: the engine dialog opens with the chart drawn above it', async ($, on) => {
+    const w = world(on)
+    on('env.get', () => ({ value: '/home/t' }))
+    on('session.surfaces', () => ({ value: ['terminal' as const] }))
+    const fence = `\`\`\`vega-lite\n${SPEC}\n\`\`\``
+    const questions = [
+      {
+        question: 'Offset ou cursor ?',
+        header: 'Pagination',
+        multiSelect: false,
+        options: [
+          { label: 'Offset', description: 'actuel', preview: fence },
+          { label: 'Cursor', description: 'nouveau', preview: fence },
+        ],
+      },
+    ]
+    let drawn: unknown
+    on('tool.call', async (_, e) => {
+      drawn = await $.ui.render({
+        component: 'AskUserQuestion',
+        surface: 'terminal',
+        requestId: 'toolu_10',
+        viewport: { columns: 120, rows: 40 },
+        props: { tool: 'AskUserQuestion', questions: Reflect.get(e, 'questions') as unknown[] },
+      } as RenderInput<'AskUserQuestion'>)
+      return { result: 'answered' }
+    })
+    await $.session.start(START)
+    await $.command.run(charts('band off'))
+
+    expect(await $.tool.call({ tool: 'AskUserQuestion', questions, tool_use_id: 'toolu_10' })).toEqual({ result: 'answered' })
+    // la bande n'a jamais attendu de réponse : le dialogue s'ouvre tout de suite
+    expect(w.programs).not.toContain('/bin/sh')
+    expect(nodesOf(drawn, 'Image')).toHaveLength(1)
   })
 
   test('AskUserQuestion without any chart is left to the engine as is', async ($, on) => {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { combinedSpec } from '../hooks/compare'
+import { combinedSpec, peersOf } from '../hooks/compare'
 
 const BAR = { mark: 'bar', data: { values: [{ a: 1 }] }, encoding: { y: { field: 'a', type: 'quantitative' } } }
 
@@ -36,5 +36,26 @@ describe('compare', () => {
       { ...BAR, title: '1. x', width: 60, height: 40 },
       { ...BAR, title: '2. y', width: 60, height: 40 },
     ])
+  })
+
+  test('peersOf: the single vega-lite specs of the other options, when the one shown has one too', async () => {
+    const fence = (spec: unknown) => '```vega-lite\n' + JSON.stringify(spec) + '\n```'
+    const other = { ...BAR, mark: 'line' }
+    const options = [
+      { preview: fence(BAR) },
+      { preview: `Texte\n\n${fence(other)}` },
+      { preview: '```mermaid\nflowchart LR\n  A --> B\n```' },
+      { preview: fence(BAR) + '\n\n' + fence(other) },
+      { preview: '```vega-lite\n{pas du json\n```' },
+      {},
+    ]
+    expect(peersOf(options, 0)).toEqual([other])
+    expect(peersOf(options, 1)).toEqual([BAR])
+    // l'option affichée sans graphique vega-lite seul : rien à partager
+    expect(peersOf(options, 2)).toEqual([])
+    expect(peersOf(options, 3)).toEqual([])
+    expect(peersOf(options, 4)).toEqual([])
+    expect(peersOf(options, 5)).toEqual([])
+    expect(peersOf(options, 9)).toEqual([])
   })
 })

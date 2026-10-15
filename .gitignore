@@ -1,3 +1,4 @@
 renderer/node_modules/
 .claude-plugin/types/
 assets/screens/raw/
+.DS_Store

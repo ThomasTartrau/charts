@@ -10,9 +10,11 @@ export type Prefs = {
   maxRows: number
   /** largeur / hauteur d'une cellule du terminal (Ghostty, JetBrains Mono : environ 0,5) */
   cellAspect: number
+  /** AskUserQuestion dans la bande au-dessus du prompt ; off : le dialogue du moteur, le graphique au-dessus */
+  band: boolean
 }
 
-export const DEFAULT_PREFS: Prefs = { enabled: true, theme: 'dark', maxColumns: 100, maxRows: 22, cellAspect: 0.5 }
+export const DEFAULT_PREFS: Prefs = { enabled: true, theme: 'dark', maxColumns: 100, maxRows: 22, cellAspect: 0.5, band: true }
 
 export const STORE_KEY = 'prefs'
 
@@ -24,7 +26,8 @@ export function prefsFrom(stored: unknown): Prefs {
     (merged.theme === 'dark' || merged.theme === 'light') &&
     Number.isFinite(merged.maxColumns) &&
     Number.isFinite(merged.maxRows) &&
-    Number.isFinite(merged.cellAspect)
+    Number.isFinite(merged.cellAspect) &&
+    typeof merged.band === 'boolean'
   return isValid ? merged : DEFAULT_PREFS
 }
 
@@ -35,11 +38,12 @@ export function statusOf(p: Prefs): string {
     `largeur max ${p.maxColumns} col`,
     `hauteur max ${p.maxRows} lignes`,
     `ratio cellule ${p.cellAspect}`,
+    `bande ${p.band ? 'on' : 'off'}`,
   ].join(' | ')
 }
 
 export const USAGE =
-  '/charts [on|off] | theme dark|light | width <20-255> | rows <3-80> | cell <0.3-0.8> | reset'
+  '/charts [on|off] | theme dark|light | width <20-255> | rows <3-80> | cell <0.3-0.8> | band on|off | reset'
 
 /** Applique les arguments de /charts ; renvoie les nouvelles préférences ou une erreur. */
 export function applyCommand(p: Prefs, args: string): { prefs: Prefs } | { error: string } {
@@ -63,6 +67,8 @@ export function applyCommand(p: Prefs, args: string): { prefs: Prefs } | { error
       return Number.isInteger(n) && n >= 3 && n <= 80 ? { prefs: { ...p, maxRows: n } } : { error: 'rows : entier de 3 à 80' }
     case 'cell':
       return n >= 0.3 && n <= 0.8 ? { prefs: { ...p, cellAspect: n } } : { error: 'cell : nombre de 0.3 à 0.8' }
+    case 'band':
+      return value === 'on' || value === 'off' ? { prefs: { ...p, band: value === 'on' } } : { error: 'band : on ou off' }
     default:
       return { error: `argument inconnu : ${word}. ${USAGE}` }
   }
