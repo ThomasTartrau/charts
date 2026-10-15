@@ -302,8 +302,8 @@ export const register: Register = on => {
     await $.command
       .register({
         name: COMMAND,
-        description: 'Graphiques vega-lite et schémas dot dessinés en images : on|off, theme, width, rows, cell, reset (charts)',
-        argumentHint: '[on|off|theme dark|light|width N|rows N|cell R|reset]',
+        description: 'Graphiques vega-lite et schémas dot dessinés en images : on|off, theme, width, rows, cell, band, reset (charts)',
+        argumentHint: '[on|off|theme dark|light|width N|rows N|cell R|band on|off|reset]',
         immediate: true,
       })
       .catch(err => $.ui.log(`charts : /${COMMAND} non enregistrée : ${err}`))
@@ -389,6 +389,8 @@ export const register: Register = on => {
       pendingAsks.set(id, asked)
       return next({ ...e, questions: withoutPreviewCharts(questions) }).finally(() => pendingAsks.delete(id))
     }
+    // /charts band off : le dialogue du moteur, qui se rend bien là où la bande casse
+    if (!prefs.band) return classic()
     // la bande n'existe que sur le terminal et le desktop ; une question à la fois
     // surfaces illisibles : pas de bande sûre, le dialogue du moteur
     const surfaces = await $.session.surfaces().catch(() => [])

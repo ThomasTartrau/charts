@@ -30,13 +30,13 @@ const fittedTo = (natural: { width: number; height: number }) => (input: { width
 }
 
 type Drawn = { kind: string; source?: string; width?: number; maxHeight?: number; spec?: { hconcat?: unknown[] }; peers?: unknown[] }
-type World = { surfaces?: RenderSurface[]; focus?: { deny?: string }; png?: (input: Drawn) => typeof PNG }
+type World = { surfaces?: RenderSurface[]; focus?: { deny?: string }; png?: (input: Drawn) => typeof PNG; stored?: Record<string, unknown> }
 
 /**
  * Le moteur sous le mod : surfaces, HOME, focus de la bande, `sh` d'attente qui
  * sort quand son fichier est écrit, dialogue du moteur qui répond « engine ».
  */
-function world(on: On, { surfaces = ['terminal'], focus = { deny: 'la bande n’a pas le clavier' }, png = () => PNG }: World = {}) {
+function world(on: On, { surfaces = ['terminal'], focus = { deny: 'la bande n’a pas le clavier' }, png = () => PNG, stored }: World = {}) {
   const drawings: Drawn[] = []
   const files = new Map<string, string>()
   const waiters: (() => void)[] = []
@@ -45,13 +45,16 @@ function world(on: On, { surfaces = ['terminal'], focus = { deny: 'la bande n’
   let markAsked = () => {}
   const isAsked = new Promise<void>(resolve => (markAsked = resolve))
 
-  mock.store(on)
+  mock.store(on, stored)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
   on('session.surfaces', () => ({ value: surfaces }))
   on('env.get', () => ({ value: '/home/t' }))
+  const invalidations: (() => void)[] = []
+  const nextInvalidate = () => new Promise<void>(resolve => invalidations.push(resolve))
   on('ui.invalidate', () => {
     markAsked()
+    invalidations.splice(0).forEach(resolve => resolve())
     return { value: undefined }
   })
   on('ui.focus', () => focus)
@@ -79,10 +82,18 @@ function world(on: On, { surfaces = ['terminal'], focus = { deny: 'la bande n’
     dialogs.push(Reflect.get(e, 'questions'))
     return { result: 'engine' }
   })
-  return { drawings, files, dialogs, opened, isAsked }
+  return { drawings, files, dialogs, opened, isAsked, nextInvalidate }
 }
 
 const START = { surface: 'terminal', isInteractive: true, cwd: '/work' } as const
+
+/** /charts tapé dans le composer */
+const charts = (args: string) => ({
+  command: 'charts',
+  args,
+  origin: { kind: 'composer' as const },
+  presentation: { isFullscreen: false, columns: 120 },
+})
 
 const BAND = {
   component: 'AbovePrompt',
@@ -137,7 +148,7 @@ describe('AskUserQuestion dans la bande au-dessus du prompt', () => {
     // 2 une seconde fois : choisi, la bande revient au moteur
     await $.ui.press({ plugin: 'charts', key: 'option-2' })
     expect(await call).toMatchObject({ result: { answers: { 'Quelle archi ?': 'Workers' } } })
-    expect(await $.ui.render(BAND)).toEqual(ENGINE_BAND)
+    expect(await $.ui.render(BAND)).toMatchObject(ENGINE_BAND)
     expect(w.dialogs).toHaveLength(0)
     expect([...w.files.keys()]).toEqual(['/home/t/.cache/claude-charts/asks/toolu_7.json'])
   })
@@ -300,7 +311,7 @@ describe('AskUserQuestion dans la bande au-dessus du prompt', () => {
     await $.ui.render(BAND)
     await $.ui.press({ plugin: 'charts', key: 'annuler' })
 
-    expect(await $.ui.render(BAND)).toEqual(ENGINE_BAND)
+    expect(await $.ui.render(BAND)).toMatchObject(ENGINE_BAND)
     await call
   })
 
@@ -507,6 +518,60 @@ describe('AskUserQuestion dans la bande au-dessus du prompt', () => {
     const plain = { ...ARCHI, options: ARCHI.options.map(o => ({ label: o.label, description: o.description })) }
 
     expect(await $.tool.call({ tool: 'AskUserQuestion', questions: [plain], tool_use_id: 'toolu_14' })).toEqual({ result: 'engine' })
-    expect(await $.ui.render(BAND)).toEqual(ENGINE_BAND)
+    expect(await $.ui.render(BAND)).toMatchObject(ENGINE_BAND)
+  })
+
+  test('/charts band off: a question with drawings opens the engine dialog, previews without their source, the band stays the engine’s', async ($, on) => {
+    const w = world(on)
+    await $.session.start(START)
+
+    const fence = `\`\`\`vega-lite\n${SPEC}\n\`\`\``
+    const question = {
+      question: 'Offset ou cursor ?',
+      header: 'Pagination',
+      multiSelect: false,
+      options: [
+        { label: 'Offset', description: 'actuel', preview: fence },
+        { label: 'Cursor', description: 'nouveau', preview: fence },
+      ],
+    }
+
+    expect((await $.command.run(charts('band off'))).text).toContain('bande off')
+    expect(await $.tool.call({ tool: 'AskUserQuestion', questions: [question], tool_use_id: 'toolu_15' })).toEqual({ result: 'engine' })
+
+    const sent = w.dialogs[0] as (typeof question)[]
+    expect(sent[0]!.options.map(o => o.preview)).toEqual([
+      '(graphique affiché au-dessus de la question)',
+      '(graphique affiché au-dessus de la question)',
+    ])
+    expect(w.files.size).toBe(0)
+    expect(await $.ui.render(BAND)).toMatchObject(ENGINE_BAND)
+  })
+
+  test('band off kept from an earlier session gives the engine dialog from the first question', async ($, on) => {
+    const w = world(on, { stored: { prefs: { band: false } } })
+    await $.session.start(START)
+
+    expect(await $.tool.call({ tool: 'AskUserQuestion', questions: [ARCHI], tool_use_id: 'toolu_16' })).toEqual({ result: 'engine' })
+    expect(w.dialogs).toHaveLength(1)
+    expect(w.files.size).toBe(0)
+  })
+
+  test('/charts band on brings the band back for the next question', async ($, on) => {
+    const w = world(on, { stored: { prefs: { band: false } } })
+    await $.session.start(START)
+
+    expect((await $.command.run(charts('band on'))).text).toContain('bande on')
+    // le changement de pref a déjà redessiné : on attend le redessin de la question
+    const isAsked = w.nextInvalidate()
+    const call = $.tool.call({ tool: 'AskUserQuestion', questions: [ARCHI], tool_use_id: 'toolu_17' })
+    await isAsked
+    const band = await $.ui.render(BAND)
+    expect(JSON.stringify(band)).toContain('Quelle archi ?')
+
+    await $.ui.press({ plugin: 'charts', key: 'option-1' })
+    await $.ui.press({ plugin: 'charts', key: 'option-1' })
+    expect(await call).toMatchObject({ result: { answers: { 'Quelle archi ?': 'Monolithe' } } })
+    expect(w.dialogs).toHaveLength(0)
   })
 })
