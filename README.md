@@ -99,9 +99,14 @@ Mermaid `pie` and `gantt` blocks are turned into Vega-Lite charts so they share 
 
 ### Options you can compare
 
-When Claude asks you to pick between options (AskUserQuestion) and each one comes with a chart,
-charts merges them into one image with a shared scale. Three bars of different heights mean something
-again. The question moves to the band above the prompt, with the image next to the options.
+When Claude asks you to pick between options (AskUserQuestion) and each one comes with a chart, the
+question moves to the band above the prompt, with the chart of the option you look at next to the
+options. Each chart is drawn alone, on the axes of all the options: three bars of different heights
+mean something again. Without the band (engine dialog), the charts are merged into one image above it.
+
+When a long description would leave the image only a few rows, it is set beside the image instead of
+above it. On the "Autre" field, the field takes most of the band and the text you type is shown whole
+next to it.
 
 <div align="center">
   <img alt="AskUserQuestion with one chart per option, on a shared scale" src="assets/screens/05-ask-chart.png" width="900">

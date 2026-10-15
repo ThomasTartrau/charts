@@ -89,6 +89,35 @@ test('bars on a log axis are drawn, inside a layer too, not stacked from log(0)'
   assert.ok(widths[0] < widths[1] && widths[1] < widths[2], `largeurs ${widths}`)
 })
 
+/** Les libellés des graduations de l'axe y d'un SVG vega. */
+function yTicks(svg) {
+  const axis = svg.slice(svg.indexOf('aria-label="Y-axis'))
+  return [...axis.slice(0, axis.indexOf('role="graphics-symbol"')).matchAll(/>([\d,.]+)<\/text>/g)].map(m => m[1])
+}
+
+test('peers share the quantitative axis: one option drawn alone, on the scale of all of them', () => {
+  const small = { ...BAR, data: { values: [{ cas: `pair-${process.pid}-${Date.now()}`, s: 40 }] } }
+  const big = { ...BAR, data: { values: [{ cas: 'a', s: 300 }, { cas: 'b', s: 400 }] } }
+  const alone = render({ spec: small, width: 400, theme: 'dark', format: 'svg' })
+  const shared = render({ spec: small, peers: [big], width: 400, theme: 'dark', format: 'svg' })
+  assert.equal(shared.ok, true)
+  assert.equal(yTicks(alone.svg).at(-1), '40')
+  assert.equal(yTicks(shared.svg).at(-1), '400')
+  // une seule barre : les catégories des autres options ne s'ajoutent pas à l'axe x
+  assert.equal([...shared.svg.matchAll(/aria-roledescription="bar"/g)].length, 1)
+  assert.doesNotMatch(shared.svg, />b<\/text>/)
+})
+
+test('an axis that is not quantitative everywhere, or a peer that does not compile, is not shared', () => {
+  const small = { ...BAR, data: { values: [{ cas: `seul-${process.pid}-${Date.now()}`, s: 40 }] } }
+  const nominal = { ...BAR, encoding: { x: BAR.encoding.x, y: { field: 's', type: 'nominal' } } }
+  for (const peer of [nominal, { mark: 'nope' }]) {
+    const out = render({ spec: small, peers: [peer], width: 400, theme: 'dark', format: 'svg' })
+    assert.equal(out.ok, true)
+    assert.equal(yTicks(out.svg).at(-1), '40')
+  }
+})
+
 test('a spec vega-lite cannot compile is an error with the reason, not a crash', () => {
   const out = render({ spec: { mark: 'nope' }, width: 400, theme: 'dark', format: 'png' })
   assert.equal(out.ok, false)

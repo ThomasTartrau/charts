@@ -8,6 +8,7 @@ import type { EngineInterface, Register, RenderElement, RenderInput } from 'clau
 import {
   answerFreely,
   askedOf,
+  besideColumns,
   confirm,
   hasDrawings,
   isOnOther,
@@ -19,6 +20,7 @@ import {
   showOption,
   showOther,
   startAsk,
+  tailOf,
   withoutPreviewCharts,
   type Asked,
   type AskState,
@@ -26,9 +28,9 @@ import {
   type Question,
   type Step,
 } from './ask'
-import { combinedSpec } from './compare'
+import { combinedSpec, peersOf } from './compare'
 import { altOf, drawingOf, type Drawn } from './drawings'
-import { chartBlocksOf, parseSpec, segmentsOf } from './fences'
+import { chartBlocksOf, parseSpec, segmentsOf, type ChartBlock } from './fences'
 import { applyCommand, DEFAULT_PREFS, GUIDE, prefsFrom, statusOf, STORE_KEY, USAGE, type Prefs } from './prefs'
 import {
   chartColumns,
@@ -52,6 +54,10 @@ const ASK_ROWS = 10
 const DIAGRAM_ROWS_FACTOR = 2
 /** largeur max de la colonne des options, dans la bande au-dessus du prompt */
 const OPTIONS_COLUMNS = 44
+/** part de la largeur de la bande que prend la colonne des options quand le champ Autre a le focus */
+const OTHER_SHARE = 0.6
+/** l'image posée à côté de la description doit gagner au moins ce facteur de surface, sinon elle reste dessous */
+const BESIDE_GAIN = 1.2
 /**
  * Un hook n'a que 10 s de temps propre, mais un appel `$` en cours ne compte pas :
  * l'appel attend la réponse dans un `sh` qui sort quand la bande écrit son fichier.
@@ -68,8 +74,11 @@ let prefs: Prefs = DEFAULT_PREFS
  * et le rendu retrouve ici les specs que les props n'ont plus.
  */
 const pendingAsks = new Map<string, Asked>()
-/** La question posée dans la bande, une à la fois ; `file` est celui qu'attend le `sh`. */
-let activeAsk: { file: string; state: AskState; isDone: boolean } | null = null
+/**
+ * La question posée dans la bande, une à la fois ; `file` est celui qu'attend le `sh`,
+ * `draft` le texte tapé dans le champ Autre de la question affichée.
+ */
+let activeAsk: { file: string; state: AskState; isDone: boolean; draft: string } | null = null
 /** l'instance de la bande au-dessus du prompt, vue au dernier rendu */
 let bandId: string | null = null
 /** la bande a le clavier : les flèches marchent, inutile d'indiquer ctrl+x tab */
@@ -108,6 +117,15 @@ async function sourceOf($: EngineInterface, requestId: string, text: string): Pr
   return found
 }
 
+/**
+ * Une image dessinée et la place qu'elle prend : `area` en cellules, `isCramped` quand
+ * la hauteur la réduit (un schéma plus haut que la place, un graphique trop bas pour se lire).
+ */
+type Shown = { element: RenderElement; area: number; isCramped: boolean }
+
+/** sous ce nombre de lignes, un graphique vega-lite ne se lit plus */
+const CRAMPED_CHART_ROWS = 8
+
 /** Un graphique ou un schéma prêt à dessiner, ou l'erreur à montrer sous sa source. */
 async function chartElement(
   $: EngineInterface,
@@ -116,9 +134,22 @@ async function chartElement(
   source: string,
   columns: number,
   maxRows: number,
-  /** dans une réponse, l'adresse du bouton « ouvrir en grand » ; absente, rendu compact (dialogue, bande) */
   openKey?: string,
 ): Promise<RenderElement> {
+  return (await shownChart($, e, drawn, source, columns, maxRows, openKey)).element
+}
+
+/** Comme chartElement, avec la place que prend l'image. */
+async function shownChart(
+  $: EngineInterface,
+  e: RenderInput<'AssistantMessage'> | RenderInput<'AskUserQuestion'> | RenderInput<'AbovePrompt'>,
+  drawn: Drawn,
+  source: string,
+  columns: number,
+  maxRows: number,
+  /** dans une réponse, l'adresse du bouton « ouvrir en grand » ; absente, rendu compact (dialogue, bande) */
+  openKey?: string,
+): Promise<Shown> {
   const t = $.ui.resolve(e)
   const isCompact = openKey === undefined
   const error = (reason: string) => (
@@ -127,13 +158,16 @@ async function chartElement(
     </t.Text>
   )
   // compact (au-dessus d'un dialogue, 12 lignes au plus) : l'erreur seule, sans la source
-  const fallback = (reason: string) =>
-    isCompact ? error(reason) : (
+  const fallback = (reason: string): Shown => ({
+    element: isCompact ? error(reason) : (
       <t.Box flexDirection="column">
         <t.Markdown text={'```\n' + source + '\n```'} />
         {error(reason)}
       </t.Box>
-    )
+    ),
+    area: 0,
+    isCramped: false,
+  })
   if ('error' in drawn) return fallback(drawn.error)
 
   const surface = e.surface
@@ -163,11 +197,23 @@ async function chartElement(
     // plus haute que la place (hauteur fixée par la spec) : réduite en largeur aussi, sinon écrasée
     if (natural > maxRows) width = Math.max(1, Math.round((width * maxRows) / natural))
     const rows = Math.min(maxRows, natural)
-    return withOpen(<t.Image source={{ file: rendered.file, format: 'png' }} columns={width} rows={rows} alt={alt} />)
+    return {
+      element: withOpen(<t.Image source={{ file: rendered.file, format: 'png' }} columns={width} rows={rows} alt={alt} />),
+      area: width * rows,
+      // le renderer réduit déjà un schéma à la hauteur donnée : plus étroit que la place et à pleine hauteur
+      isCramped: (width < columns && rows >= maxRows) || (drawn.kind === 'vega-lite' && rows < CRAMPED_CHART_ROWS),
+    }
   }
   if ('Svg' in t && rendered.svg) {
     if (rendered.svg.length > 131_072) return fallback('SVG trop lourd pour la surface (plus de 128 Kio)')
-    return withOpen(<t.Svg source={rendered.svg} alt={alt} width={rendered.width} />)
+    // le desktop dessine le SVG à sa taille : la même place, comptée en cellules
+    const width = Math.ceil(rendered.width / PX_PER_COLUMN)
+    const rows = chartRows(width, rendered.width, rendered.height, prefs.cellAspect)
+    return {
+      element: withOpen(<t.Svg source={rendered.svg} alt={alt} width={rendered.width} />),
+      area: width * rows,
+      isCramped: drawn.kind === 'vega-lite' && rows < CRAMPED_CHART_ROWS,
+    }
   }
   return fallback(`surface ${surface} sans image`)
 }
@@ -202,16 +248,15 @@ function stepAsk($: EngineInterface, change: (state: AskState) => Step) {
   if (!activeAsk || activeAsk.isDone) return
   const step = change(activeAsk.state)
   if ('answers' in step) return finishAsk($, step)
+  if (step.state.index !== activeAsk.state.index) activeAsk.draft = ''
   activeAsk.state = step.state
   $.ui.invalidate('ui.render')
 }
 
-/** Taille de l'image ouverte en grand quand la bande assemble les options en un graphique. */
-const LARGE_COMBINED = { width: 1400, height: 700 }
-
 /**
  * L'aperçu de l'option affichée : son texte et ses graphiques ou schémas, à la taille donnée,
- * et ce que « ouvrir en grand » dessine (le premier, ou le graphique assemblé).
+ * ce que « ouvrir en grand » dessine (le premier), et la place que prennent les images.
+ * Un graphique vega-lite seul est dessiné seul, sur les axes partagés avec ceux des autres options.
  */
 async function askPreview(
   $: EngineInterface,
@@ -220,26 +265,17 @@ async function askPreview(
   focus: number,
   columns: number,
   rows: number,
-): Promise<{ element: RenderElement; large: Drawing | null }> {
+): Promise<{ element: RenderElement; large: Drawing | null; area: number; isCramped: boolean }> {
   const t = $.ui.resolve(e)
-  // que des graphiques vega-lite : une seule image, toutes les options sur les mêmes échelles
-  const charts = question.options.flatMap((o, i) => {
-    const blocks = o.preview ? chartBlocksOf(o.preview) : []
-    const parsed = blocks.length === 1 && blocks[0]!.kind === 'vega-lite' ? parseSpec(blocks[0]!.source) : null
-    return parsed && 'spec' in parsed ? [{ index: i + 1, label: o.label, spec: parsed.spec }] : []
-  })
-  if (charts.length >= 2 && charts.length === question.options.filter(o => o.preview).length) {
-    const spec = combinedSpec(charts, columns * PX_PER_COLUMN, maxHeightFor(rows, prefs.cellAspect))
-    return {
-      element: await chartElement($, e, { kind: 'vega-lite', spec }, '', columns, rows),
-      large: { kind: 'vega-lite', spec: combinedSpec(charts, LARGE_COMBINED.width, LARGE_COMBINED.height) },
-    }
-  }
-
   const preview = question.options[focus]?.preview
-  if (!preview) return { element: <t.Text dimColor>(pas d'aperçu pour cette option)</t.Text>, large: null }
+  if (!preview) return { element: <t.Text dimColor>(pas d'aperçu pour cette option)</t.Text>, large: null, area: 0, isCramped: false }
+  const peers = peersOf(question.options, focus)
+  const drawingFor = (block: ChartBlock): Drawn => {
+    const drawn = drawingOf(block)
+    return peers.length > 0 && 'kind' in drawn && drawn.kind === 'vega-lite' ? { ...drawn, peers } : drawn
+  }
   const segments = segmentsOf(preview, chartBlocksOf(preview))
-  const large = segments.flatMap(s => (s.kind === 'chart' ? [drawingOf(s.block)] : [])).find((d): d is Drawing => !('error' in d)) ?? null
+  const large = segments.flatMap(s => (s.kind === 'chart' ? [drawingFor(s.block)] : [])).find((d): d is Drawing => !('error' in d)) ?? null
   // le texte de l'aperçu d'abord : les images se partagent les lignes qui restent
   const textRows = segments.reduce((sum, s) => sum + (s.kind === 'text' ? linesOf(s.text, columns) : 0), 0)
   const imageCount = segments.filter(s => s.kind === 'chart').length
@@ -247,11 +283,16 @@ async function askPreview(
   const parts = await Promise.all(
     segments.map(segment =>
       segment.kind === 'text'
-        ? <t.Markdown text={segment.text} />
-        : chartElement($, e, drawingOf(segment.block), segment.block.source, columns, imageRows),
+        ? { element: <t.Markdown text={segment.text} />, area: 0, isCramped: false }
+        : shownChart($, e, drawingFor(segment.block), segment.block.source, columns, imageRows),
     ),
   )
-  return { element: <t.Box flexDirection="column">{parts}</t.Box>, large }
+  return {
+    element: <t.Box flexDirection="column">{parts.map(p => p.element)}</t.Box>,
+    large,
+    area: parts.reduce((sum, p) => sum + p.area, 0),
+    isCramped: parts.some(p => p.isCramped),
+  }
 }
 
 export const register: Register = on => {
@@ -356,7 +397,7 @@ export const register: Register = on => {
     if (activeAsk || !hasBand || !home || !isSafeId(id)) return classic()
 
     const file = `${home}/.cache/claude-charts/asks/${id}.json`
-    activeAsk = { file, state: startAsk(questions), isDone: false }
+    activeAsk = { file, state: startAsk(questions), isDone: false, draft: '' }
     bandHasKeys = false
     // le tour interrompu (Échap au prompt, ctrl+c) libère l'attente
     next.signal.addEventListener('abort', () => finishAsk($, { cancel: true }), { once: true })
@@ -397,7 +438,8 @@ export const register: Register = on => {
     bandId = e.requestId
     const state = activeAsk?.state
     const question = state?.questions[state.index]
-    if (!state || !question || activeAsk?.isDone || e.props.hasSurvey) return next(e)
+    if (!state || !question || !activeAsk || activeAsk.isDone || e.props.hasSurvey) return next(e)
+    const draft = activeAsk.draft
 
     const t = $.ui.resolve(e)
     const count = state.questions.length
@@ -425,11 +467,24 @@ export const register: Register = on => {
       )
     })
     const onOther = isOnOther(state)
-    const description = onOther ? 'Tape ta réponse puis Entrée.' : (question.options[state.focus]?.description ?? '')
-    // la réponse libre (« Other » du dialogue), là où la surface a un champ de saisie
+    const hint = 'Tape ta réponse puis Entrée.'
+    const description = onOther ? hint : (question.options[state.focus]?.description ?? '')
+    // la réponse libre (« Other » du dialogue), là où la surface a un champ de saisie ;
+    // le texte tapé est gardé pour être montré en entier à côté du champ, qui n'a qu'une ligne
     const other =
       'Input' in t ? (
-        <t.Input key="autre" label="Autre" placeholder="réponse libre" submitLabel="envoyer" onSubmit={(text: string) => stepAsk($, s => answerFreely(s, text))} />
+        <t.Input
+          key="autre"
+          label="Autre"
+          placeholder="réponse libre"
+          submitLabel="envoyer"
+          onInput={(text: string) => {
+            if (!activeAsk || activeAsk.isDone || activeAsk.draft === text) return
+            activeAsk.draft = text
+            $.ui.invalidate('ui.render')
+          }}
+          onSubmit={(text: string) => stepAsk($, s => answerFreely(s, text))}
+        />
       ) : null
     const choose = question.multiSelect ? 'Entrée : cocher' : 'Entrée : choisir'
     // bas depuis le prompt vient de global/keybindings.json ; ctrl+x tab est celui du moteur
@@ -438,9 +493,11 @@ export const register: Register = on => {
       : `bas (ou ctrl+x tab) : aller aux options  chiffre : voir, deux fois : choisir`
 
     // la colonne des options à la largeur du plus long libellé (marque, « 1: », libellé),
-    // ou du champ Autre avec le focus, qui ajoute « ⏎ envoyer » (mesuré en session)
+    // ou du champ Autre avec le focus, qui ajoute « ⏎ envoyer » (mesuré en session) ;
+    // sur Autre, le champ prend la place de l'aperçu : trop étroit, le moteur replie son
+    // libellé et « envoyer » sur une seconde ligne
     const longest = Math.max(...question.options.map(o => [...o.label].length + 7), 'Autre: réponse libre ⏎ envoyer'.length + 2)
-    const left = Math.min(OPTIONS_COLUMNS, Math.floor(width * 0.4), longest)
+    const left = onOther ? Math.max(longest, Math.floor(width * OTHER_SHARE)) : Math.min(OPTIONS_COLUMNS, Math.floor(width * 0.4), longest)
     const right = Math.max(20, width - left - 2)
     // Tout doit tenir dans maxRows : titre, écart, corps, pied. Le corps fait la
     // hauteur des options ou de la description et de l'aperçu, ce qui est le plus haut.
@@ -451,7 +508,18 @@ export const register: Register = on => {
     const isDrawn = shownPreview !== undefined && chartBlocksOf(shownPreview).length > 0
     const descriptionRows = !description ? 0 : linesOf(description, right) + (isDrawn ? 0 : 1)
     // sur « Autre », pas d'aperçu : celui de la dernière option vue tromperait
-    const preview = onOther ? null : await askPreview($, e, question, state.focus, right, bodyRows - descriptionRows)
+    let preview = onOther ? null : await askPreview($, e, question, state.focus, right, bodyRows - descriptionRows)
+    // Une description longue sous l'image ne lui laisse que quelques lignes : posée à
+    // côté, entière, elle laisse à l'image toute la hauteur, si l'image y gagne vraiment.
+    let besideWidth: number | null = null
+    if (preview?.isCramped && isDrawn && description) {
+      const narrowest = besideColumns(description, right, bodyRows)
+      const beside = narrowest === null ? null : await askPreview($, e, question, state.focus, right - narrowest - 2, bodyRows)
+      if (beside && beside.area > preview.area * BESIDE_GAIN) {
+        preview = beside
+        besideWidth = narrowest
+      }
+    }
     const large = preview?.large
     const footer = (
       <t.Box flexDirection="row" gap={2}>
@@ -479,11 +547,23 @@ export const register: Register = on => {
             {options}
             {other}
           </t.Box>
-          <t.Box flexDirection="column" width={right}>
-            {description ? <t.Text dimColor wrap="wrap">{description}</t.Text> : null}
-            {description && !isDrawn ? <t.Text> </t.Text> : null}
-            {preview?.element}
-          </t.Box>
+          {besideWidth !== null ? (
+            <t.Box flexDirection="row" gap={2} width={right}>
+              <t.Box flexDirection="column" width={besideWidth}>
+                <t.Text dimColor wrap="wrap">{description}</t.Text>
+              </t.Box>
+              <t.Box flexDirection="column" width={right - besideWidth - 2}>
+                {preview?.element}
+              </t.Box>
+            </t.Box>
+          ) : (
+            <t.Box flexDirection="column" width={right}>
+              {description ? <t.Text dimColor wrap="wrap">{description}</t.Text> : null}
+              {description && !isDrawn ? <t.Text> </t.Text> : null}
+              {onOther && draft ? <t.Text wrap="wrap">{tailOf(draft, right, bodyRows - descriptionRows)}</t.Text> : null}
+              {preview?.element}
+            </t.Box>
+          )}
         </t.Box>
         {footer}
       </t.Box>

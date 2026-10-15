@@ -89,6 +89,30 @@ export function linesOf(text: string, width: number): number {
   }, 0)
 }
 
+/** largeur min de la description posée à côté de l'image, et de l'image à côté d'elle */
+const BESIDE_MIN_COLUMNS = 30
+const IMAGE_MIN_COLUMNS = 24
+
+/**
+ * La largeur la plus étroite où `text` tient en entier sur `rows` lignes, à côté
+ * d'une image dans `columns` colonnes (2 d'écart) ; null quand rien ne tient.
+ */
+export function besideColumns(text: string, columns: number, rows: number): number | null {
+  for (let width = BESIDE_MIN_COLUMNS; width <= columns - IMAGE_MIN_COLUMNS - 2; width++) {
+    if (linesOf(text, width) <= rows) return width
+  }
+  return null
+}
+
+/** La fin de `text` qui tient sur `rows` lignes de `width` colonnes, « ... » devant quand elle est coupée. */
+export function tailOf(text: string, width: number, rows: number): string {
+  if (linesOf(text, width) <= rows) return text
+  const chars = [...text]
+  let start = 1
+  while (start < chars.length && linesOf(`...${chars.slice(start).join('')}`, width) > rows) start++
+  return `...${chars.slice(start).join('')}`
+}
+
 export function startAsk(questions: Question[]): AskState {
   return { questions, index: 0, focus: 0, picked: [], answers: {} }
 }

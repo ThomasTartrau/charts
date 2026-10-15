@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import {
   answerFreely,
+  besideColumns,
   confirm,
   hasDrawings,
   isOnOther,
@@ -12,6 +13,7 @@ import {
   showOption,
   showOther,
   startAsk,
+  tailOf,
   type AskState,
   type Question,
   type Step,
@@ -129,5 +131,27 @@ describe('ask', () => {
     expect(outcomeOf('')).toBeNull()
     expect(outcomeOf('{"answers":{"Q ?":3}}')).toBeNull()
     expect(outcomeOf('[1]')).toBeNull()
+  })
+
+  test('besideColumns: the narrowest width holding the text whole, leaving room to the image', async () => {
+    const text = 'mot '.repeat(40).trim()
+    // 40 mots de 3 lettres : 10 par ligne de 39 colonnes, 4 lignes ; à 38, une cinquième
+    expect(besideColumns(text, 120, 4)).toBe(39)
+    expect(linesOf(text, 39)).toBe(4)
+    expect(linesOf(text, 38)).toBeGreaterThan(4)
+    // jamais sous 30 colonnes, même pour un texte court
+    expect(besideColumns('court', 120, 4)).toBe(30)
+    // l'image garde 24 colonnes et 2 d'écart : 120 - 26 = 94 au plus pour le texte
+    expect(besideColumns(text, 120, 1)).toBeNull()
+    expect(besideColumns('court', 50, 4)).toBeNull()
+  })
+
+  test('tailOf: the text as is when it fits, else its end after "..."', async () => {
+    expect(tailOf('court', 20, 1)).toBe('court')
+    const long = `${'mot '.repeat(30)}fin`
+    const tail = tailOf(long, 20, 2)
+    expect(tail.startsWith('...')).toBe(true)
+    expect(tail.endsWith('mot fin')).toBe(true)
+    expect(linesOf(tail, 20)).toBeLessThanOrEqual(2)
   })
 })

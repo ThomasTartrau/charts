@@ -23,14 +23,21 @@ function textOf(tree: unknown): string {
   return textOf((tree as Node).children ?? [])
 }
 
-type World ={ surfaces?: RenderSurface[]; focus?: { deny?: string } }
+/** Un schéma de cette taille naturelle, réduit comme le fait le renderer pour tenir dans width x maxHeight. */
+const fittedTo = (natural: { width: number; height: number }) => (input: { width?: number; maxHeight?: number }) => {
+  const fit = Math.min(1, (input.width ?? Infinity) / natural.width, (input.maxHeight ?? Infinity) / natural.height)
+  return { ...PNG, width: Math.round(natural.width * fit), height: Math.round(natural.height * fit) }
+}
+
+type Drawn = { kind: string; source?: string; width?: number; maxHeight?: number; spec?: { hconcat?: unknown[] }; peers?: unknown[] }
+type World = { surfaces?: RenderSurface[]; focus?: { deny?: string }; png?: (input: Drawn) => typeof PNG }
 
 /**
  * Le moteur sous le mod : surfaces, HOME, focus de la bande, `sh` d'attente qui
  * sort quand son fichier est écrit, dialogue du moteur qui répond « engine ».
  */
-function world(on: On, { surfaces = ['terminal'], focus = { deny: 'la bande n’a pas le clavier' } }: World = {}) {
-  const drawings: { kind: string; source?: string; width?: number; spec?: { hconcat?: unknown[] } }[] = []
+function world(on: On, { surfaces = ['terminal'], focus = { deny: 'la bande n’a pas le clavier' }, png = () => PNG }: World = {}) {
+  const drawings: Drawn[] = []
   const files = new Map<string, string>()
   const waiters: (() => void)[] = []
   const dialogs: unknown[] = []
@@ -61,8 +68,9 @@ function world(on: On, { surfaces = ['terminal'], focus = { deny: 'la bande n’
     }
     const file = e.argv[0] === '/bin/sh' ? e.argv.at(-1) : undefined
     if (file === undefined) {
-      drawings.push(JSON.parse(e.init?.stdin ?? '{}'))
-      return { value: { exitCode: 0, stdout: JSON.stringify(PNG), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+      const input: Drawn = JSON.parse(e.init?.stdin ?? '{}')
+      drawings.push(input)
+      return { value: { exitCode: 0, stdout: JSON.stringify(png(input)), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
     }
     while (!files.has(file)) await new Promise<void>(resolve => waiters.push(resolve))
     return { value: { exitCode: 0, stdout: files.get(file) ?? '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
@@ -134,17 +142,54 @@ describe('AskUserQuestion dans la bande au-dessus du prompt', () => {
     expect([...w.files.keys()]).toEqual(['/home/t/.cache/claude-charts/asks/toolu_7.json'])
   })
 
-  test('a short band still holds the whole question: the image gets only the rows left', async ($, on) => {
-    const w = world(on)
+  test('a short band puts a long description beside a diagram that would be cramped under it', async ($, on) => {
+    // le cas vu en session : bande de 10 lignes, description de 3 lignes, flowchart LR large et plat
+    const w = world(on, { png: fittedTo({ width: 1100, height: 260 }) })
     await $.session.start(START)
+    const description =
+      "Même modèle que le jeton Claude : le pod appelle http://proxy/<secret>/<chemin>, le proxy injecte et relaie vers l'hôte fixé par le secret. Pas de CA, pas de TLS terminé, petit diff. git marche via insteadOf, curl via l'URL ; les gates sont réécrites (pas de curl direct vers api.github.com)."
+    const question = {
+      question: "Quel modèle d'interception pour le proxy multi-secrets ?",
+      header: 'Interception',
+      multiSelect: false,
+      options: [
+        { label: 'Relais par URL (Recommande)', description, preview: mermaid('P[Pod agent] --> X[auth-proxy] --> R[Registre]') },
+        { label: 'Proxy forward + TLS', description: 'CA injectée', preview: mermaid('P[Pod] --> F[Forward] --> G[api.github.com]') },
+      ],
+    }
+    const short = { ...BAND, viewport: { columns: 165, rows: 40 }, props: { ...BAND.props, bodyColumns: 160, maxRows: 10, scroll: { offset: 0, bodyRows: 9 } } }
 
-    const call = $.tool.call({ tool: 'AskUserQuestion', questions: [ARCHI], tool_use_id: 'toolu_16' })
+    const call = $.tool.call({ tool: 'AskUserQuestion', questions: [question], tool_use_id: 'toolu_40' })
     await w.isAsked
-    const tree = await $.ui.render({ ...BAND, props: { ...BAND.props, maxRows: 12, scroll: { offset: 0, bodyRows: 11 } } })
+    const tree = await $.ui.render(short)
 
-    // 12 lignes : titre 1, écart 1, pied 1, description 1 (sans ligne vide) : 8 pour l'image
-    expect(w.drawings.at(-1)).toMatchObject({ maxHeight: 128 })
-    expect(nodesOf(tree, 'Image')[0]!.props?.rows).toBeLessThanOrEqual(8)
+    // 160 colonnes : 34 aux options, 124 à droite ; 10 lignes : titre, écart, pied, 7 au corps.
+    // Dessous, la description (3 lignes) ne laissait que 4 lignes : 34 x 4 cellules d'image.
+    // À côté, elle tient sur 7 lignes en 44 colonnes, l'image a les 7 lignes : 60 x 7.
+    const image = nodesOf(tree, 'Image')[0]!
+    expect(image.props).toMatchObject({ columns: 60, rows: 7 })
+    expect(w.drawings.at(-1)).toMatchObject({ kind: 'mermaid', width: 78 * 8, maxHeight: 112 })
+    const beside = nodesOf(tree, 'Box').find(n => n.props?.width === 44)
+    expect(beside && nodesOf(beside, 'Text').map(n => [textOf(n), n.props?.wrap])).toEqual([[description, 'wrap']])
+    await $.ui.press({ plugin: 'charts', key: 'annuler' })
+    await call
+  })
+
+  test('a description too long to stand beside the image stays whole above it', async ($, on) => {
+    const w = world(on, { png: fittedTo({ width: 1100, height: 260 }) })
+    await $.session.start(START)
+    const description = 'Une description très longue. '.repeat(25).trim()
+    const question = { ...ARCHI, options: [{ ...ARCHI.options[0]!, description }, ARCHI.options[1]!] }
+
+    const call = $.tool.call({ tool: 'AskUserQuestion', questions: [question], tool_use_id: 'toolu_41' })
+    await w.isAsked
+    const tree = await $.ui.render({ ...BAND, props: { ...BAND.props, maxRows: 14, scroll: { offset: 0, bodyRows: 13 } } })
+
+    // 86 colonnes à droite, 11 lignes au corps : 724 caractères ne tiennent pas en 11 lignes
+    // sur les 60 colonnes que l'image laisse au plus ; la description reste au-dessus, entière
+    const right = nodesOf(tree, 'Box').find(n => n.props?.width === 86)
+    expect(right && nodesOf(right, 'Text').map(n => [textOf(n), n.props?.wrap])).toEqual([[description, 'wrap']])
+    expect(w.drawings.every(d => d.width === 86 * 8)).toBe(true)
     await $.ui.press({ plugin: 'charts', key: 'annuler' })
     await call
   })
@@ -275,31 +320,112 @@ describe('AskUserQuestion dans la bande au-dessus du prompt', () => {
     await call
   })
 
-  test('vega-lite previews are one image beside the options, every option on shared scales', async ($, on) => {
+  test('each option shows its own vega-lite chart, drawn on the axes shared with the other options', async ($, on) => {
     const w = world(on)
     await $.session.start(START)
-    const fence = `\`\`\`vega-lite\n${SPEC}\n\`\`\``
+    const offset = { ...JSON.parse(SPEC), title: 'offset' }
+    const cursor = { ...JSON.parse(SPEC), title: 'cursor' }
+    const fence = (spec: unknown) => `\`\`\`vega-lite\n${JSON.stringify(spec)}\n\`\`\``
     const questions = [
       {
         question: 'Offset ou cursor ?',
         header: 'Pagination',
         multiSelect: false,
         options: [
-          { label: 'Offset', description: 'actuel', preview: fence },
-          { label: 'Cursor', description: 'nouveau', preview: fence },
+          { label: 'Offset', description: 'actuel', preview: fence(offset) },
+          { label: 'Cursor', description: 'nouveau', preview: fence(cursor) },
         ],
       },
     ]
 
     const call = $.tool.call({ tool: 'AskUserQuestion', questions, tool_use_id: 'toolu_9' })
     await w.isAsked
+    const first = await $.ui.render(BAND)
+
+    // une option, un graphique : jamais ceux des autres options assemblés à côté
+    expect(nodesOf(first, 'Image')).toHaveLength(1)
+    expect(w.drawings.map(d => d.spec?.hconcat)).toEqual([undefined])
+    expect(w.drawings[0]).toMatchObject({ kind: 'vega-lite', spec: offset, peers: [cursor] })
+
+    await $.ui.press({ plugin: 'charts', key: 'option-2' })
+    const second = await $.ui.render(BAND)
+    expect(nodesOf(second, 'Image')).toHaveLength(1)
+    expect(w.drawings.at(-1)).toMatchObject({ kind: 'vega-lite', spec: cursor, peers: [offset] })
+
+    // ouvrir en grand : le graphique de l'option affichée, sur les mêmes axes
+    await $.ui.press({ plugin: 'charts', key: 'ouvrir' })
+    expect(w.drawings.at(-1)).toMatchObject({ spec: cursor, peers: [offset], width: 1400, opaque: true })
+
+    await $.ui.press({ plugin: 'charts', key: 'option-2' })
+    expect(await call).toMatchObject({ result: { answers: { 'Offset ou cursor ?': 'Cursor' } } })
+  })
+
+  test('a vega-lite chart next to options drawn otherwise has no axes to share', async ($, on) => {
+    const w = world(on)
+    await $.session.start(START)
+    const question = {
+      ...ARCHI,
+      options: [{ ...ARCHI.options[0]!, preview: `\`\`\`vega-lite\n${SPEC}\n\`\`\`` }, ARCHI.options[1]!],
+    }
+
+    const call = $.tool.call({ tool: 'AskUserQuestion', questions: [question], tool_use_id: 'toolu_42' })
+    await w.isAsked
+    await $.ui.render(BAND)
+
+    expect(w.drawings).toHaveLength(1)
+    expect(w.drawings[0]!.kind).toBe('vega-lite')
+    expect(w.drawings[0]!.peers).toBeUndefined()
+    await $.ui.press({ plugin: 'charts', key: 'annuler' })
+    await call
+  })
+
+  test('on the Autre field, the field gets most of the band and the text typed is shown whole beside it', async ($, on) => {
+    const w = world(on, { focus: {} })
+    await $.session.start(START)
+
+    const call = $.tool.call({ tool: 'AskUserQuestion', questions: [ARCHI], tool_use_id: 'toolu_43' })
+    await w.isAsked
+    const before = await $.ui.render(BAND)
+    const fieldColumn = (tree: unknown) => nodesOf(tree, 'Box').find(n => nodesOf(n.children ?? [], 'Input').length > 0 && n.props?.width !== undefined)
+    expect(fieldColumn(before)?.props?.width).toBe(32)
+
+    await $.ui.focus({ component: 'AbovePrompt', requestId: 'band', plugin: 'charts', element: 'autre', origin: { kind: 'person' } })
+    // 32 colonnes : le moteur repliait « Autre: » et « envoyer » sur une seconde ligne
+    expect(fieldColumn(await $.ui.render(BAND))?.props?.width).toBe(72)
+
+    const typed = 'un monolithe modulaire, découpé par domaine, avec une file pour les scans longs'
+    await $.ui.input({ plugin: 'charts', key: 'autre', text: typed, kind: 'change' })
+    const echoed = nodesOf(await $.ui.render(BAND), 'Text').filter(n => textOf(n) === typed)
+    expect(echoed.map(n => [n.props?.wrap, n.props?.dimColor])).toEqual([['wrap', undefined]])
+
+    // trop long pour la bande : la fin, celle qu'on est en train de taper, précédée de « ... »
+    const long = `${'mot '.repeat(120)}fin`
+    await $.ui.input({ plugin: 'charts', key: 'autre', text: long, kind: 'change' })
+    const short = await $.ui.render({ ...BAND, props: { ...BAND.props, maxRows: 8, scroll: { offset: 0, bodyRows: 7 } } })
+    const tail = nodesOf(short, 'Text').map(textOf).find(text => text.startsWith('...'))
+    expect(tail?.endsWith('mot fin')).toBe(true)
+
+    await $.ui.input({ plugin: 'charts', key: 'autre', text: typed, kind: 'submit' })
+    expect(await call).toMatchObject({ result: { answers: { 'Quelle archi ?': typed } } })
+  })
+
+  test('the text typed for one question is not shown under the next one', async ($, on) => {
+    const w = world(on, { focus: {} })
+    await $.session.start(START)
+    const next = { ...ARCHI, question: 'Et la base ?', header: 'Base' }
+
+    const call = $.tool.call({ tool: 'AskUserQuestion', questions: [ARCHI, next], tool_use_id: 'toolu_44' })
+    await w.isAsked
+    await $.ui.render(BAND)
+    await $.ui.focus({ component: 'AbovePrompt', requestId: 'band', plugin: 'charts', element: 'autre', origin: { kind: 'person' } })
+    await $.ui.input({ plugin: 'charts', key: 'autre', text: 'réponse un', kind: 'change' })
+    await $.ui.input({ plugin: 'charts', key: 'autre', text: 'réponse un', kind: 'submit' })
     const tree = await $.ui.render(BAND)
 
-    expect(nodesOf(tree, 'Image')).toHaveLength(1)
-    expect(w.drawings).toHaveLength(1)
-    expect(w.drawings[0]!.spec?.hconcat).toHaveLength(2)
-    await $.ui.press({ plugin: 'charts', key: 'option-1' })
-    expect(await call).toMatchObject({ result: { answers: { 'Offset ou cursor ?': 'Offset' } } })
+    expect(JSON.stringify(tree)).toContain('Et la base ?')
+    expect(JSON.stringify(tree)).not.toContain('réponse un')
+    await $.ui.press({ plugin: 'charts', key: 'annuler' })
+    await call
   })
 
   test('several questions, one multiple choice, are answered in turn; Valider sends the ticked ones', async ($, on) => {

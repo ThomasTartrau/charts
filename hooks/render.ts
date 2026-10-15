@@ -71,8 +71,13 @@ async function runRenderer(run: Run, root: string, input: string): Promise<Rende
   return { ok: false, error: lastError }
 }
 
-/** Ce que le renderer dessine : une spec vega-lite, ou la source texte d'un schéma. */
-export type Drawing = { kind: 'vega-lite'; spec: Record<string, unknown> } | { kind: 'mermaid' | 'dot'; source: string }
+/**
+ * Ce que le renderer dessine : une spec vega-lite, ou la source texte d'un schéma.
+ * `peers` : les specs des autres options d'une question, dont les axes quantitatifs sont partagés.
+ */
+export type Drawing =
+  | { kind: 'vega-lite'; spec: Record<string, unknown>; peers?: Record<string, unknown>[] }
+  | { kind: 'mermaid' | 'dot'; source: string }
 
 export function renderChart(
   run: Run,
