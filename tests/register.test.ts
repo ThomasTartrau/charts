@@ -281,6 +281,54 @@ describe('register', () => {
     expect(nodesOf(tree, 'Image')).toHaveLength(1)
   })
 
+  test('a missing renderer package installs the dependencies once, then renders', async ($, on) => {
+    const argv: string[][] = []
+    const cwds: (string | undefined)[] = []
+    let isInstalled = false
+    const ok = { exitCode: 0, stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
+    mock.store(on)
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    on('command.register', ($, e) => ({ value: { command: e.name } }))
+    on('process.run', ($, e) => {
+      argv.push([...e.argv])
+      if (e.argv[0] === 'pnpm') {
+        cwds.push(e.init?.cwd)
+        isInstalled = true
+        return { value: { ...ok, stdout: '' } }
+      }
+      const missing = { ok: false, error: "Cannot find package 'beautiful-mermaid' imported from /p/renderer/render.mjs" }
+      return { value: { ...ok, stdout: JSON.stringify(isInstalled ? PNG : missing) } }
+    })
+    on('ui.render', { component: 'AssistantMessage' }, () => ({ type: 'engine' as const, ref: 0 }))
+    await $.session.start(START)
+
+    const tree = await $.ui.render(message(MESSAGE))
+
+    expect(argv.map(a => a[0])).toEqual(['node', 'pnpm', 'node'])
+    expect(argv[1]).toEqual(['pnpm', 'install', '--prod', '--frozen-lockfile'])
+    expect(cwds[0]).toMatch(/\/renderer$/)
+    expect(nodesOf(tree, 'Image')).toHaveLength(1)
+  })
+
+  test('a failed dependency install shows why instead of the missing package', async ($, on) => {
+    mock.store(on)
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    on('command.register', ($, e) => ({ value: { command: e.name } }))
+    on('process.run', ($, e) => {
+      const result = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
+      if (e.argv[0] === 'pnpm') return { value: { ...result, exitCode: 1, stderr: 'ERR_PNPM_FETCH_404 vega' } }
+      return { value: { ...result, stdout: JSON.stringify({ ok: false, error: "Cannot find package 'vega' imported from /p/renderer/render.mjs" }) } }
+    })
+    on('ui.render', { component: 'AssistantMessage' }, () => ({ type: 'engine' as const, ref: 0 }))
+    await $.session.start(START)
+
+    const tree = await $.ui.render(message(MESSAGE))
+
+    expect(JSON.stringify(tree)).toContain('dépendances du renderer non installées')
+    expect(JSON.stringify(tree)).toContain('ERR_PNPM_FETCH_404')
+    expect(nodesOf(tree, 'Image')).toHaveLength(0)
+  })
+
   test('/charts off hands every message back to the engine, /charts on brings images back', async ($, on) => {
     const w = world(on)
     await $.session.start(START)
