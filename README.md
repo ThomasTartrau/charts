@@ -70,8 +70,9 @@ claude plugin install charts@tartrau-mods
 
 From inside a session, `/plugin marketplace add` and `/plugin install` do the same thing.
 
-Claude Code installs the renderer's npm dependencies during the install. Start a new session and
-ask something with numbers in it.
+Claude Code doesn't install the renderer's npm dependencies. The first chart installs them in the
+plugin's `renderer/` folder (pnpm, or npm without it), which takes a few seconds. Start a new
+session and ask something with numbers in it.
 
 ### Updating
 

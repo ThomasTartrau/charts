@@ -17,6 +17,16 @@ export type Rendered =
 export const PX_PER_COLUMN = 8
 
 const NODES = ['node', '/opt/homebrew/bin/node', '/usr/local/bin/node']
+/** pnpm d'abord (le lockfile du renderer est le sien), npm sinon */
+const INSTALLERS = [
+  ...['pnpm', '/opt/homebrew/bin/pnpm', '/usr/local/bin/pnpm'].map(bin => [bin, 'install', '--prod', '--frozen-lockfile']),
+  ...['npm', '/opt/homebrew/bin/npm', '/usr/local/bin/npm'].map(bin => [bin, 'install', '--omit=dev', '--no-audit', '--no-fund']),
+]
+/** npm et pnpm se lancent par `#!/usr/bin/env node` : node doit être sur le PATH */
+const INSTALL_PATH = '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin'
+const MISSING_DEPENDENCY = /Cannot find (package|module) '[^.'/][^']*'/
+/** une installation par process : les rendus qui la rencontrent l'attendent tous */
+let installing: Promise<string | null> | undefined
 /** macOS, puis Linux */
 const OPENERS = ['/usr/bin/open', 'xdg-open']
 const MEMO_SIZE = 64
@@ -72,6 +82,36 @@ async function runRenderer(run: Run, root: string, input: string): Promise<Rende
 }
 
 /**
+ * Installe les dépendances du renderer. Claude Code copie le plugin sans
+ * `renderer/node_modules` (ignoré par git) et n'y lance aucune installation.
+ * Rend l'erreur, ou null.
+ */
+async function installDependencies(run: Run, root: string): Promise<string | null> {
+  let lastError = 'ni pnpm ni npm introuvable'
+  for (const argv of INSTALLERS) {
+    const ran = await run(argv, { cwd: `${root}/renderer`, env: { PATH: INSTALL_PATH }, timeoutMs: 300_000 }).catch(
+      (error: unknown) => ({ failed: error instanceof Error ? error.message : String(error) }),
+    )
+    if ('failed' in ran) {
+      if (!ran.failed.includes('failed to start')) return ran.failed
+      lastError = ran.failed
+      continue
+    }
+    return ran.exitCode === 0 ? null : (ran.stderr.trim() || ran.stdout.trim()).slice(-300) || `${argv[0]} : exit ${ran.exitCode}`
+  }
+  return lastError
+}
+
+async function renderWithDependencies(run: Run, root: string, input: string): Promise<Rendered> {
+  const rendered = await runRenderer(run, root, input)
+  if (rendered.ok || !MISSING_DEPENDENCY.test(rendered.error)) return rendered
+  installing ??= installDependencies(run, root)
+  const failed = await installing
+  if (failed) return { ok: false, error: `dépendances du renderer non installées (${root}/renderer) : ${failed}` }
+  return runRenderer(run, root, input)
+}
+
+/**
  * Ce que le renderer dessine : une spec vega-lite, ou la source texte d'un schéma.
  * `peers` : les specs des autres options d'une question, dont les axes quantitatifs sont partagés.
  */
@@ -102,7 +142,7 @@ export function renderChart(
 }
 
 function startRender(run: Run, root: string, input: string): Promise<Rendered> {
-  const pending = runRenderer(run, root, input)
+  const pending = renderWithDependencies(run, root, input)
   // le cache disque du renderer prend le relais : on ne garde que les plus récents (SVG lourds)
   if (memo.size >= MEMO_SIZE) memo.delete(memo.keys().next().value!)
   memo.set(input, pending)
