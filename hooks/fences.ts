@@ -96,16 +96,3 @@ export function parseSpec(source: string): ParsedSpec {
   }
   return { spec: value as Record<string, unknown> }
 }
-
-/** Remplace chaque bloc vega-lite par une courte mention, pour un aperçu texte ; un schéma reste. */
-export function withoutCharts(text: string, label: string): string {
-  const blocks = chartBlocksOf(text).filter(block => block.kind === 'vega-lite')
-  if (blocks.length === 0) return text
-  let out = ''
-  let cursor = 0
-  for (const block of blocks) {
-    out += text.slice(cursor, block.start) + label
-    cursor = block.end
-  }
-  return out + text.slice(cursor)
-}

@@ -6,7 +6,7 @@
     {
       "name": "charts",
       "source": "./",
-      "description": "Dessine les blocs vega-lite, mermaid et dot des réponses et des aperçus AskUserQuestion en vraies images (PNG dans Ghostty, SVG sur le desktop)."
+      "description": "Dessine les blocs vega-lite, mermaid et dot des réponses en vraies images (PNG dans Ghostty, SVG sur le desktop)."
     }
   ]
 }

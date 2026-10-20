@@ -1,4 +1,4 @@
 {
-  "description": "charts : blocs vega-lite dessinés en images dans le transcript et sous AskUserQuestion.",
+  "description": "charts : blocs vega-lite, mermaid et dot dessinés en images dans le transcript.",
   "modules": ["./register.tsx"]
 }
