@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { chartBlocksOf, parseSpec, segmentsOf, withoutCharts } from '../hooks/fences'
+import { chartBlocksOf, parseSpec, segmentsOf } from '../hooks/fences'
 
 const SPEC = '{"mark":"bar","data":{"values":[{"a":1}]}}'
 
@@ -57,16 +57,5 @@ describe('fences', () => {
     expect('error' in broken && broken.error.startsWith('JSON invalide')).toBe(true)
     expect(parseSpec('[1, 2]')).toEqual({ error: 'la spec doit être un objet JSON' })
     expect(parseSpec('42')).toEqual({ error: 'la spec doit être un objet JSON' })
-  })
-
-  test('withoutCharts swaps each chart for the label and keeps the rest', async () => {
-    const text = `Coût :\n\`\`\`vega-lite\n${SPEC}\n\`\`\`\nfin`
-    expect(withoutCharts(text, '[graphique]')).toBe('Coût :\n[graphique]\nfin')
-    expect(withoutCharts('rien', '[graphique]')).toBe('rien')
-  })
-
-  test('withoutCharts leaves a dot diagram in place: only charts are drawn above a question', async () => {
-    const text = '```dot\ndigraph { a -> b }\n```'
-    expect(withoutCharts(text, '[graphique]')).toBe(text)
   })
 })

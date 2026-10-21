@@ -10,11 +10,9 @@ export type Prefs = {
   maxRows: number
   /** largeur / hauteur d'une cellule du terminal (Ghostty, JetBrains Mono : environ 0,5) */
   cellAspect: number
-  /** AskUserQuestion dans la bande au-dessus du prompt ; off : le dialogue du moteur, le graphique au-dessus */
-  band: boolean
 }
 
-export const DEFAULT_PREFS: Prefs = { enabled: true, theme: 'dark', maxColumns: 100, maxRows: 22, cellAspect: 0.5, band: true }
+export const DEFAULT_PREFS: Prefs = { enabled: true, theme: 'dark', maxColumns: 100, maxRows: 22, cellAspect: 0.5 }
 
 export const STORE_KEY = 'prefs'
 
@@ -26,8 +24,7 @@ export function prefsFrom(stored: unknown): Prefs {
     (merged.theme === 'dark' || merged.theme === 'light') &&
     Number.isFinite(merged.maxColumns) &&
     Number.isFinite(merged.maxRows) &&
-    Number.isFinite(merged.cellAspect) &&
-    typeof merged.band === 'boolean'
+    Number.isFinite(merged.cellAspect)
   return isValid ? merged : DEFAULT_PREFS
 }
 
@@ -38,12 +35,10 @@ export function statusOf(p: Prefs): string {
     `largeur max ${p.maxColumns} col`,
     `hauteur max ${p.maxRows} lignes`,
     `ratio cellule ${p.cellAspect}`,
-    `bande ${p.band ? 'on' : 'off'}`,
   ].join(' | ')
 }
 
-export const USAGE =
-  '/charts [on|off] | theme dark|light | width <20-255> | rows <3-80> | cell <0.3-0.8> | band on|off | reset'
+export const USAGE = '/charts [on|off] | theme dark|light | width <20-255> | rows <3-80> | cell <0.3-0.8> | reset'
 
 /** Applique les arguments de /charts ; renvoie les nouvelles préférences ou une erreur. */
 export function applyCommand(p: Prefs, args: string): { prefs: Prefs } | { error: string } {
@@ -67,8 +62,6 @@ export function applyCommand(p: Prefs, args: string): { prefs: Prefs } | { error
       return Number.isInteger(n) && n >= 3 && n <= 80 ? { prefs: { ...p, maxRows: n } } : { error: 'rows : entier de 3 à 80' }
     case 'cell':
       return n >= 0.3 && n <= 0.8 ? { prefs: { ...p, cellAspect: n } } : { error: 'cell : nombre de 0.3 à 0.8' }
-    case 'band':
-      return value === 'on' || value === 'off' ? { prefs: { ...p, band: value === 'on' } } : { error: 'band : on ou off' }
     default:
       return { error: `argument inconnu : ${word}. ${USAGE}` }
   }
@@ -84,5 +77,4 @@ export const GUIDE = [
   'Lead with the chart, then one or two sentences: the conclusion and the one or two figures that matter. No table that repeats what the chart shows, no ASCII chart.',
   'Spec: Vega-Lite v6 JSON, data inline in data.values, a short title. Do not set width, height, colors, background or config: the mod applies size and theme. One chart per block, at most 8 series, one y axis; several measures of different units go in separate blocks.',
   'Use measured figures. When a value is an estimate, say so in the title ("estimation") and never present it as measured.',
-  'AskUserQuestion: whenever the options differ on something measurable (time, cost, size, risk, effort, perf), give each option a preview holding one vega-lite block of the same shape (same fields, same mark), so the mod lines them up on one shared scale inside the question. Qualitative options can be scored 1 to 5 on two to four criteria, titled as an estimation. When the options are designs, flows or architectures, give each option a preview holding one mermaid diagram of that option instead: the person sees the diagram of the option they look at.',
 ].join('\n')

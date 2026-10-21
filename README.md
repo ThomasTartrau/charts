@@ -101,30 +101,6 @@ Mermaid `pie` and `gantt` blocks are turned into Vega-Lite charts so they share 
   <img alt="A mermaid sequence diagram in a Claude reply" src="assets/screens/03-sequence.png" width="560">
 </div>
 
-### Options you can compare
-
-When Claude asks you to pick between options (AskUserQuestion) and each one comes with a chart, the
-question moves to the band above the prompt, with the chart of the option you look at next to the
-options. Each chart is drawn alone, on the axes of all the options: three bars of different heights
-mean something again. Without the band (engine dialog), the charts are merged into one image above it.
-If the band renders badly in your terminal, `/charts band off` keeps the engine dialog for every
-question, with the charts above it.
-
-When a long description would leave the image only a few rows, it is set beside the image instead of
-above it. On the "Autre" field, the field takes most of the band and the text you type is shown whole
-next to it.
-
-<div align="center">
-  <img alt="AskUserQuestion with one chart per option, on a shared scale" src="assets/screens/05-ask-chart.png" width="900">
-</div>
-
-Options that are designs rather than numbers get a diagram each. The image follows the option you
-move to.
-
-<div align="center">
-  <img alt="AskUserQuestion with an architecture diagram for the focused option" src="assets/screens/06-ask-diagram.png" width="900">
-</div>
-
 Every image has an "ouvrir en grand" button that opens a full-size PNG in your image viewer.
 
 ## Usage
@@ -141,7 +117,6 @@ The `/charts` command shows and changes the settings. They are kept across sessi
 | `/charts width <20-255>` | Maximum chart width, in terminal columns (default 100) |
 | `/charts rows <3-80>` | Maximum chart height, in terminal rows (default 22) |
 | `/charts cell <0.3-0.8>` | Width/height ratio of a terminal cell (default 0.5) |
-| `/charts band on` / `off` | Ask questions in the band above the prompt, or in the engine dialog with the charts above it (default on) |
 | `/charts reset` | Back to the defaults |
 
 ## How it works
@@ -156,7 +131,7 @@ flowchart LR
 ```
 
 - `hooks/` is the mod: TypeScript hooks that Claude Code loads. It finds chart blocks in each
-  reply, draws them, adds a short guide to the system prompt, and handles AskUserQuestion.
+  reply, draws them and adds a short guide to the system prompt.
 - `renderer/` is a small Node script built on [Vega-Lite](https://vega.github.io/vega-lite/),
   [beautiful-mermaid](https://github.com/lukilabs/beautiful-mermaid),
   [Viz.js](https://github.com/mdaines/viz-js) (Graphviz) and

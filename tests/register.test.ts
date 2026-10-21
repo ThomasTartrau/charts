@@ -27,12 +27,9 @@ function textOf(tree: unknown): string {
 /** Le monde sous le mod : store, commandes, renderer et rendu du moteur. */
 function world(on: On, rendered: object = PNG, opener = { exitCode: 0, stderr: '' }) {
   const runs: string[] = []
-  /** le programme de chaque process lancé, hors visionneuse */
-  const programs: string[] = []
   const opened: string[][] = []
   const toasts: string[] = []
   const leads: string[] = []
-  const asked: unknown[] = []
   mock.store(on)
   on('session.start', ($, e) => ({ cwd: e.cwd }))
   on('command.register', ($, e) => ({ value: { command: e.name } }))
@@ -47,7 +44,6 @@ function world(on: On, rendered: object = PNG, opener = { exitCode: 0, stderr: '
       opened.push([...e.argv])
       return { value: { ...result, ...opener } }
     }
-    programs.push(e.argv[0] ?? '')
     runs.push(e.init?.stdin ?? '')
     return { value: { ...result, stdout: JSON.stringify(rendered) } }
   })
@@ -55,11 +51,7 @@ function world(on: On, rendered: object = PNG, opener = { exitCode: 0, stderr: '
     leads.push(e.props.text)
     return { type: 'engine' as const, ref: 0 }
   })
-  on('ui.render', { component: 'AskUserQuestion' }, ($, e) => {
-    asked.push(e.props.questions)
-    return { type: 'engine' as const, ref: 0 }
-  })
-  return { runs, programs, opened, toasts, leads, asked }
+  return { runs, opened, toasts, leads }
 }
 
 function message(text: string, surface: 'terminal' | 'desktop' = 'terminal'): RenderInput<'AssistantMessage'> {
@@ -354,203 +346,29 @@ describe('register', () => {
     expect(status.text).toContain('largeur max 100 col')
   })
 
-  test('AskUserQuestion: previews lose their JSON, each option gets its chart under the dialog', async ($, on) => {
+  test('AskUserQuestion is left to the engine, even with a chart in a preview', async ($, on) => {
     const w = world(on)
-    await $.session.start(START)
-    const fence = `\`\`\`vega-lite\n${SPEC}\n\`\`\``
-    const questions = [
-      {
-        question: 'Quelle stratégie de cache ?',
-        header: 'Cache',
-        multiSelect: false,
-        options: [
-          { label: 'sccache local', description: 'actuel', preview: `Disque : 38 Go\n${fence}` },
-          { label: 'sccache + Redis', description: 'partagé', preview: fence },
-          { label: 'Rien', description: 'sans cache' },
-        ],
-      },
-    ]
-
-    const tree = await $.ui.render({
-      component: 'AskUserQuestion',
-      surface: 'terminal',
-      requestId: 'toolu_1',
-      viewport: { columns: 120, rows: 40 },
-      props: { tool: 'AskUserQuestion', questions },
-    } as RenderInput<'AskUserQuestion'>)
-
-    const drawn = w.asked[0] as typeof questions
-    expect(drawn[0]!.options[0]!.preview).toBe('Disque : 38 Go\n(graphique affiché au-dessus de la question)')
-    expect(drawn[0]!.options[1]!.preview).toBe('(graphique affiché au-dessus de la question)')
-    expect(drawn[0]!.options[2]!.preview).toBeUndefined()
-    // une seule image : le moteur additionne les lignes d'une rangée, 2 cartes ne tiendraient pas
-    const images = nodesOf(tree, 'Image')
-    expect(images).toHaveLength(1)
-    // PNG de 800 px : 100 colonnes ; le ratio donnerait 21 lignes, plafonnées à 10 pour le dialogue,
-    // et la largeur suit (100 x 10 / 21) pour que l'image ne soit pas écrasée
-    expect(images[0]!.props).toMatchObject({ columns: 48, rows: 10 })
-    expect(w.runs).toHaveLength(1)
-    const sent = JSON.parse(w.runs[0]!)
-    expect(sent).toMatchObject({ width: 928, maxHeight: 160 })
-    expect(sent.spec.hconcat.map((s: { title: string }) => s.title)).toEqual(['1. sccache local', '2. sccache + Redis'])
-    expect(sent.spec.resolve).toEqual({ scale: { x: 'shared', y: 'shared', color: 'shared' } })
-    // les aperçus sont dessinés avant le dialogue, que le moteur garde en dernier
-    const children = (tree as Node).children ?? []
-    expect(children.at(-1)).toEqual({ type: 'engine', ref: expect.any(Number) })
-  })
-
-  test('AskUserQuestion with one broken preview charts the others and names the broken one', async ($, on) => {
-    const w = world(on)
-    await $.session.start(START)
-    const questions = [
-      {
-        question: 'Laquelle ?',
-        header: 'Choix',
-        multiSelect: false,
-        options: [
-          { label: 'A', description: 'a', preview: `\`\`\`vega-lite\n${SPEC}\n\`\`\`` },
-          { label: 'B', description: 'b', preview: '```vega-lite\n{"mark": \n```' },
-        ],
-      },
-    ]
-
-    const tree = await $.ui.render({
-      component: 'AskUserQuestion',
-      surface: 'terminal',
-      requestId: 'toolu_4',
-      viewport: { columns: 120, rows: 40 },
-      props: { tool: 'AskUserQuestion', questions },
-    } as RenderInput<'AskUserQuestion'>)
-
-    expect(nodesOf(tree, 'Image')).toHaveLength(1)
-    expect(JSON.stringify(tree)).toContain("aperçu illisible pour l'option 2")
-    const sent = JSON.parse(w.runs[0]!)
-    expect(sent.spec.hconcat).toHaveLength(1)
-    // la ligne d'erreur en plus : l'image passe de 10 à 8 lignes pour que le moteur accepte
-    expect(sent.maxHeight).toBe(128)
-  })
-
-  test('AskUserQuestion with a broken chart keeps the row to one error line', async ($, on) => {
-    world(on)
-    await $.session.start(START)
-    const questions = [
-      {
-        question: 'Laquelle ?',
-        header: 'Choix',
-        multiSelect: false,
-        options: [
-          { label: 'A', description: 'a', preview: '```vega-lite\n{"mark": \n```' },
-          { label: 'B', description: 'b' },
-        ],
-      },
-    ]
-
-    const tree = await $.ui.render({
-      component: 'AskUserQuestion',
-      surface: 'terminal',
-      requestId: 'toolu_3',
-      viewport: { columns: 120, rows: 40 },
-      props: { tool: 'AskUserQuestion', questions },
-    } as RenderInput<'AskUserQuestion'>)
-
-    expect(nodesOf(tree, 'Markdown')).toHaveLength(0)
-    expect(nodesOf(tree, 'Image')).toHaveLength(0)
-    expect(JSON.stringify(tree)).toContain("aperçu illisible pour l'option 1")
-  })
-
-  test('AskUserQuestion through tool.call, no band on the surface: the dialog gets the previews without JSON, the charts still draw', async ($, on) => {
-    const w = world(on)
-    on('env.get', () => ({ value: '/home/t' }))
-    on('session.surfaces', () => ({ value: ['vscode' as const] }))
-    const fence = `\`\`\`vega-lite\n${SPEC}\n\`\`\``
     const questions = [
       {
         question: 'Offset ou cursor ?',
         header: 'Pagination',
         multiSelect: false,
         options: [
-          { label: 'Offset', description: 'actuel', preview: fence },
-          { label: 'Cursor', description: 'nouveau', preview: fence },
+          { label: 'Offset', description: 'actuel', preview: `\`\`\`vega-lite\n${SPEC}\n\`\`\`` },
+          { label: 'Cursor', description: 'nouveau' },
         ],
       },
     ]
     let dialogInput: unknown
-    let drawn: unknown
     // le moteur sous le mod : il ouvre le dialogue avec ce que tool.call lui passe
-    on('tool.call', async (_, e) => {
+    on('tool.call', (_, e) => {
       dialogInput = Reflect.get(e, 'questions')
-      drawn = await $.ui.render({
-        component: 'AskUserQuestion',
-        surface: 'terminal',
-        requestId: 'toolu_9',
-        viewport: { columns: 120, rows: 40 },
-        props: { tool: 'AskUserQuestion', questions: dialogInput as unknown[] },
-      } as RenderInput<'AskUserQuestion'>)
       return { result: 'answered' }
     })
     await $.session.start(START)
 
-    await $.tool.call({ tool: 'AskUserQuestion', questions, tool_use_id: 'toolu_9' })
-
-    const sentToDialog = dialogInput as typeof questions
-    expect(sentToDialog[0]!.options.map(o => o.preview)).toEqual([
-      '(graphique affiché au-dessus de la question)',
-      '(graphique affiché au-dessus de la question)',
-    ])
-    expect(nodesOf(drawn, 'Image')).toHaveLength(1)
-    const sent = JSON.parse(w.runs[0]!)
-    expect(sent.spec.hconcat.map((s: { title: string }) => s.title)).toEqual(['1. Offset', '2. Cursor'])
-  })
-
-  test('/charts band off on a terminal with the band: the engine dialog opens with the chart drawn above it', async ($, on) => {
-    const w = world(on)
-    on('env.get', () => ({ value: '/home/t' }))
-    on('session.surfaces', () => ({ value: ['terminal' as const] }))
-    const fence = `\`\`\`vega-lite\n${SPEC}\n\`\`\``
-    const questions = [
-      {
-        question: 'Offset ou cursor ?',
-        header: 'Pagination',
-        multiSelect: false,
-        options: [
-          { label: 'Offset', description: 'actuel', preview: fence },
-          { label: 'Cursor', description: 'nouveau', preview: fence },
-        ],
-      },
-    ]
-    let drawn: unknown
-    on('tool.call', async (_, e) => {
-      drawn = await $.ui.render({
-        component: 'AskUserQuestion',
-        surface: 'terminal',
-        requestId: 'toolu_10',
-        viewport: { columns: 120, rows: 40 },
-        props: { tool: 'AskUserQuestion', questions: Reflect.get(e, 'questions') as unknown[] },
-      } as RenderInput<'AskUserQuestion'>)
-      return { result: 'answered' }
-    })
-    await $.session.start(START)
-    await $.command.run(charts('band off'))
-
-    expect(await $.tool.call({ tool: 'AskUserQuestion', questions, tool_use_id: 'toolu_10' })).toEqual({ result: 'answered' })
-    // la bande n'a jamais attendu de réponse : le dialogue s'ouvre tout de suite
-    expect(w.programs).not.toContain('/bin/sh')
-    expect(nodesOf(drawn, 'Image')).toHaveLength(1)
-  })
-
-  test('AskUserQuestion without any chart is left to the engine as is', async ($, on) => {
-    const w = world(on)
-    await $.session.start(START)
-    const questions = [{ question: 'Oui ?', header: 'Q', multiSelect: false, options: [{ label: 'a', description: 'b' }, { label: 'c', description: 'd' }] }]
-
-    await $.ui.render({
-      component: 'AskUserQuestion',
-      surface: 'terminal',
-      requestId: 'toolu_2',
-      props: { tool: 'AskUserQuestion', questions },
-    } as RenderInput<'AskUserQuestion'>)
-
-    expect(w.asked[0]).toEqual(questions)
+    expect(await $.tool.call({ tool: 'AskUserQuestion', questions, tool_use_id: 'toolu_1' })).toEqual({ result: 'answered' })
+    expect(dialogInput).toEqual(questions)
     expect(w.runs).toHaveLength(0)
   })
 
@@ -570,6 +388,8 @@ describe('register', () => {
     const withGuide = await $.prompt.compose(request)
     expect(withGuide.sections.map(s => s.id)).toEqual(['intro', 'charts:guide'])
     expect(withGuide.sections[1]!.text).toContain('vega-lite')
+    // les aperçus AskUserQuestion ne sont plus dessinés : le guide n'y envoie plus de graphique
+    expect(withGuide.sections[1]!.text).not.toContain('AskUserQuestion')
 
     await $.command.run(charts('off'))
     const without = await $.prompt.compose(request)
